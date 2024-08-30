@@ -1,12 +1,13 @@
 /*
  * @Author: xt 1661219752@qq.com
  * @Date: 2024-08-23 11:10:40
- * @LastEditors: xt 1661219752@qq.com
- * @LastEditTime: 2024-08-30 17:06:40
- * @Description:
+ * @LastEditors: xt-guiyi 1661219752@qq.com
+ * @LastEditTime: 2024-08-31 03:34:14
+ * @Description: 地图页
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import cityData from './assets/cityData.json'
 import mapBoxStyle from './assets/mapBoxStyle.json'
 import { GetFeaturesBySQLParameters, FeatureService } from '@supermapgis/iclient-ol'
 import { applyStyle } from 'ol-mapbox-style'
@@ -18,28 +19,67 @@ import VectorTileLayer from 'ol/layer/VectorTile.js'
 import VectorLayer from 'ol/layer/Vector.js'
 import VectorSource from 'ol/source/Vector.js'
 import { defaults as defaultInteractions } from 'ol/interaction/defaults'
-import { defaults as defaultControls } from 'ol/control/defaults'
-import Overlay from 'ol/Overlay.js'
+import FullScreen from 'ol/control/FullScreen.js'
 import Modify from 'ol/interaction/Modify'
 import Select from 'ol/interaction/Select'
 import Draw from 'ol/interaction/Draw'
 import Snap from 'ol/interaction/Snap'
-import { Layer } from 'ol/layer'
-import { Button } from 'antd'
-
+import Translate from 'ol/interaction/Translate'
+import { format } from 'ol/coordinate.js'
+import MousePosition from 'ol/control/MousePosition'
+import { TreeSelect, FloatButton, Spin } from 'antd'
+import { LoadingOutlined } from '@ant-design/icons'
+import Control from 'ol/control/Control'
 
 const apiServices = new FeatureService('https://iserver.supermap.io/iserver/services/data-China100/rest/data')
+const requestFuns = {
+	getCityParams: (smid: string) => {
+		return new GetFeaturesBySQLParameters({
+			queryParameter: {
+				name: 'China_Province_pg@China',
+				attributeFilter: `SMID = ${smid}`,
+			},
+			datasetNames: ['China:China_Province_pg'],
+			returnFeaturesOnly: true,
+		})
+	},
+	getWorldParams: (smid: string) => {
+		return new GetFeaturesBySQLParameters({
+			queryParameter: {
+				name: 'World_Continent_pg@China',
+				attributeFilter: `SMID = ${smid}`,
+			},
+			datasetNames: ['China:World_Continent_pg'],
+			returnFeaturesOnly: true,
+		})
+	},
+}
+
 function App() {
-	const [map, setMap] = useState<Map | null>(null)
-	const [areaLayer, setAreaLayer] = useState<Layer | null>(null)
-	const [smid, setSmid] = useState<string>('15')
+	const mapRef = useRef<Map | null>(null)
+	const areaLayerRef = useRef<VectorLayer | null>(null)
+	const selectInteractionRef = useRef<Select | null>(null)
+	const modifyInteractionRef = useRef<Modify | null>(null)
+	const translateInteractionRef = useRef<Translate | null>(null)
+	const snapInteractionRef = useRef<Snap | null>(null)
+	const drawInteractionRef = useRef<Draw | null>(null)
+	const citySelectRef = useRef<HTMLDivElement | null>(null)
+	const editRef = useRef<HTMLDivElement | null>(null)
+	const [isEdit, setIsEdit] = useState(false)
+	const [isLoading, setIsLoading] = useState(false)
 	console.log('App组件渲染')
 
 	// 加载地图
 	useEffect(() => {
-		const client = new Map({
+		mapRef.current = new Map({
 			target: 'map',
-			controls: defaultControls(),
+			controls: [
+				new FullScreen(),
+				new MousePosition({
+					coordinateFormat: coordinate => format(coordinate!, '经度：{x} | 纬度：{y}', 2),
+					projection: 'EPSG:4326',
+				}),
+			],
 			interactions: defaultInteractions({ doubleClickZoom: false }),
 			view: new View({
 				center: fromLonLat([116.0678288, 35.9384171]),
@@ -51,91 +91,137 @@ function App() {
 				projection: 'EPSG:3857',
 			}),
 		})
+		// 加载地图底图
 		const layer = new VectorTileLayer({ declutter: true })
 		applyStyle(layer, mapBoxStyle)
-		client.addLayer(layer)
-		setMap(client)
+		mapRef.current.addLayer(layer)
+		if (citySelectRef.current) mapRef.current.addControl(new Control({ element: citySelectRef.current }))
+		if (editRef.current) mapRef.current.addControl(new Control({ element: editRef.current }))
 		console.log('地图加载完成')
+		// 加载数据
+		handleAreaSelect()
 		return () => {
-			client && client.setTarget(undefined)
-			setMap(null)
+			mapRef.current && mapRef.current.setTarget(undefined)
 		}
 	}, [])
 
-	// 初始化地图数据
-	useEffect(() => {
-		console.log('初始化地图数据', map)
-		if (map) combineAction(map)
-	}, [map])
-
-	// 切换省份
-	const combineAction = async (map: Map, smid: string = '15') => {
-		const layer = await setMapLayer(map, smid)
-		setMapInteraction(map, layer)
-		setSmid(smid)
-		setAreaLayer(layer)
-	}
-
-	const setMapLayer = async (map: Map, smid: string) => {
-		var sqlParam = new GetFeaturesBySQLParameters({
-			queryParameter: {
-				name: 'China_Province_pg@China',
-				attributeFilter: `SMID = ${smid}`,
-			},
-			datasetNames: ['China:China_Province_pg'],
-			returnFeaturesOnly: true,
-		})
-		const result = await apiServices.getFeaturesBySQL(sqlParam)
-		if (areaLayer !== null) map.removeLayer(areaLayer) // 先清除之前的图层
+	// 处理省份切换
+	const handleAreaSelect = async (smid?: string) => {
+		if (!mapRef.current) return
+		if (areaLayerRef.current !== null) mapRef.current.removeLayer(areaLayerRef.current) // 先清除之前的图层
+		setIsEdit(false)
+		setIsLoading(true)
+		const sqlParam = smid ? requestFuns.getCityParams(smid) : requestFuns.getWorldParams('1')
+		const { result } = await apiServices.getFeaturesBySQL(sqlParam)
 		const vectorSource = new VectorSource({
-			features: new GeoJSON().readFeatures(result.result.features),
+			features: new GeoJSON().readFeatures(result.features),
 			wrapX: false,
 		})
 		const vectorLayer = new VectorLayer({
 			source: vectorSource,
+			updateWhileAnimating: true,
+			updateWhileInteracting: true,
 		})
-		map.addLayer(vectorLayer)
-		return vectorLayer
+		mapRef.current.addLayer(vectorLayer)
+		mapRef.current.getView().fit(vectorSource.getExtent(), { padding: [50, 50, 50, 170] })
+		areaLayerRef.current = vectorLayer
+		setIsLoading(false)
+		setInteraction(mapRef.current, areaLayerRef.current)
 	}
 
-	const setMapInteraction = (map: Map, layer: VectorLayer) => {
-		// Select 增加图层可选中功能
-		const selecter = new Select({ layers: [layer] })
-		selecter.on('select', e => {
-			console.log(e)
+	// 设置交互控件
+	const setInteraction = (map: Map, layer: VectorLayer) => {
+		if (selectInteractionRef.current) map.removeInteraction(selectInteractionRef.current)
+		if (modifyInteractionRef.current) map.removeInteraction(modifyInteractionRef.current)
+		if (translateInteractionRef.current) map.removeInteraction(translateInteractionRef.current)
+		if (drawInteractionRef.current) map.removeInteraction(drawInteractionRef.current)
+		if (snapInteractionRef.current) map.removeInteraction(snapInteractionRef.current)
+		// 增加选中功能
+		selectInteractionRef.current = new Select({ layers: [layer] })
+		selectInteractionRef.current.on('select', e => {
+			drawInteractionRef.current?.setActive(e.selected.length > 0 ? false : true)
+			console.log('选中了', e.selected)
 		})
-		map.addInteraction(selecter)
-		// 增加在地图上绘制功能，数据会添加到指定数据源
-		map.addInteraction(
-			new Draw({
-				type: 'Polygon',
-				source: layer.getSource()!,
-			})
-		)
-		map.addInteraction(
-			new Snap({
-				source: layer.getSource()!,
-			})
-		)
-		// Modify增加修改功能
-		map.addInteraction(new Modify({ features: selecter.getFeatures() }))
+		// 增加修改功能
+		modifyInteractionRef.current = new Modify({ features: selectInteractionRef.current.getFeatures() })
+		// 增加平移功能
+		translateInteractionRef.current = new Translate({ features: selectInteractionRef.current.getFeatures() })
+		// 增加绘制功能
+		drawInteractionRef.current = new Draw({
+			type: 'Polygon',
+			source: layer.getSource()!,
+			snapTolerance: 20,
+			freehand: true,
+		})
+		snapInteractionRef.current = new Snap({
+			source: layer.getSource()!,
+		})
+		selectInteractionRef.current.setActive(false)
+		modifyInteractionRef.current.setActive(false)
+		translateInteractionRef.current.setActive(false)
+		drawInteractionRef.current.setActive(false)
+		snapInteractionRef.current.setActive(false)
+		map.addInteraction(selectInteractionRef.current)
+		map.addInteraction(modifyInteractionRef.current)
+		map.addInteraction(translateInteractionRef.current)
+		map.addInteraction(drawInteractionRef.current)
+		map.addInteraction(snapInteractionRef.current)
 	}
 
-  const setMapOverlay = (map: Map) => {
-      //  const overlay = new Overlay({
-			// 		element: this.$refs.hotspotMarkRef,
-			// 		stopEvent: true,
-			// 		position: fromLonLat([longitude, latitude]),
-			// 	})
-			// 	this.map.addOverlay(this.overlay)
-  }
+	const handleEdit = () => {
+		if (!mapRef.current || !areaLayerRef.current) return
+		if (
+			!selectInteractionRef.current ||
+			!modifyInteractionRef.current ||
+			!translateInteractionRef.current ||
+			!drawInteractionRef.current ||
+			!snapInteractionRef.current
+		)
+			return
+		if (isEdit) {
+			// 取消编辑
+			selectInteractionRef.current.setActive(false)
+			drawInteractionRef.current.setActive(false)
+			snapInteractionRef.current.setActive(false)
+			modifyInteractionRef.current.setActive(false)
+			translateInteractionRef.current.setActive(false)
+		} else {
+			// 开始编辑
+			selectInteractionRef.current.setActive(true)
+			drawInteractionRef.current.setActive(true)
+			snapInteractionRef.current.setActive(true)
+			modifyInteractionRef.current.setActive(true)
+			translateInteractionRef.current.setActive(true)
+		}
+		setIsEdit(!isEdit)
+	}
 
 	return (
 		<>
 			<div id='map'></div>
-      <div className='province-select-container'>
-        <Button type='primary' >河北省</Button>
-      </div>
+			<div ref={citySelectRef} id='province-select-control'>
+				<TreeSelect
+					getPopupContainer={() => document.getElementById('province-select-control')!}
+					style={{ width: '100%' }}
+					allowClear
+					placeholder='请选择省份'
+					treeData={cityData}
+					onChange={value => {
+						mapRef.current && handleAreaSelect(cityData.find(item => item.value === value)?.smid)
+					}}
+				/>
+			</div>
+			<div ref={editRef} id='edit-control'>
+				<FloatButton
+					shape='square'
+					type='primary'
+					tooltip={isEdit ? '取消编辑' : '编辑'}
+					description={isEdit ? '取消编辑' : '编辑'}
+					style={{ insetInlineEnd: 10, insetBlockEnd: 10 }}
+					onClick={handleEdit}
+				/>
+			</div>
+			<Spin spinning={isLoading} size='large' indicator={<LoadingOutlined spin />} tip='加载中...' fullscreen />
 		</>
 	)
 }

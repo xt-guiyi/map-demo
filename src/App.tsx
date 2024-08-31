@@ -2,7 +2,7 @@
  * @Author: xt 1661219752@qq.com
  * @Date: 2024-08-23 11:10:40
  * @LastEditors: xt-guiyi 1661219752@qq.com
- * @LastEditTime: 2024-08-31 03:34:14
+ * @LastEditTime: 2024-09-01 02:09:46
  * @Description: 地图页
  */
 import { useEffect, useRef, useState } from 'react'
@@ -56,22 +56,25 @@ const requestFuns = {
 }
 
 function App() {
-	const mapRef = useRef<Map | null>(null)
-	const areaLayerRef = useRef<VectorLayer | null>(null)
-	const selectInteractionRef = useRef<Select | null>(null)
-	const modifyInteractionRef = useRef<Modify | null>(null)
-	const translateInteractionRef = useRef<Translate | null>(null)
-	const snapInteractionRef = useRef<Snap | null>(null)
-	const drawInteractionRef = useRef<Draw | null>(null)
-	const citySelectRef = useRef<HTMLDivElement | null>(null)
-	const editRef = useRef<HTMLDivElement | null>(null)
+	const mapRef = useRef<Map>()
+	// 数据图层
+	const areaLayerRef = useRef<VectorLayer>()
+	// 交互器
+	const selectInteractionRef = useRef<Select>()
+	const modifyInteractionRef = useRef<Modify>()
+	const translateInteractionRef = useRef<Translate>()
+	const snapInteractionRef = useRef<Snap>()
+	const drawInteractionRef = useRef<Draw>()
+	// dom节点
+	const provinceSelectRef = useRef<HTMLDivElement>(null!)
+	const editRef = useRef<HTMLDivElement>(null!)
 	const [isEdit, setIsEdit] = useState(false)
 	const [isLoading, setIsLoading] = useState(false)
 	console.log('App组件渲染')
 
 	// 加载地图
 	useEffect(() => {
-		mapRef.current = new Map({
+		const client = new Map({
 			target: 'map',
 			controls: [
 				new FullScreen(),
@@ -91,15 +94,18 @@ function App() {
 				projection: 'EPSG:3857',
 			}),
 		})
+		// 加载自定义控件
+		client.addControl(new Control({ element: provinceSelectRef.current }))
+		client.addControl(new Control({ element: editRef.current }))
 		// 加载地图底图
 		const layer = new VectorTileLayer({ declutter: true })
 		applyStyle(layer, mapBoxStyle)
-		mapRef.current.addLayer(layer)
-		if (citySelectRef.current) mapRef.current.addControl(new Control({ element: citySelectRef.current }))
-		if (editRef.current) mapRef.current.addControl(new Control({ element: editRef.current }))
-		console.log('地图加载完成')
 		// 加载数据
+		client.addLayer(layer)
 		handleAreaSelect()
+		console.log('地图加载完成')
+
+		mapRef.current = client
 		return () => {
 			mapRef.current && mapRef.current.setTarget(undefined)
 		}
@@ -108,7 +114,7 @@ function App() {
 	// 处理省份切换
 	const handleAreaSelect = async (smid?: string) => {
 		if (!mapRef.current) return
-		if (areaLayerRef.current !== null) mapRef.current.removeLayer(areaLayerRef.current) // 先清除之前的图层
+		if (areaLayerRef.current) mapRef.current.removeLayer(areaLayerRef.current) // 先清除之前的图层
 		setIsEdit(false)
 		setIsLoading(true)
 		const sqlParam = smid ? requestFuns.getCityParams(smid) : requestFuns.getWorldParams('1')
@@ -169,37 +175,18 @@ function App() {
 	}
 
 	const handleEdit = () => {
-		if (!mapRef.current || !areaLayerRef.current) return
-		if (
-			!selectInteractionRef.current ||
-			!modifyInteractionRef.current ||
-			!translateInteractionRef.current ||
-			!drawInteractionRef.current ||
-			!snapInteractionRef.current
-		)
-			return
-		if (isEdit) {
-			// 取消编辑
-			selectInteractionRef.current.setActive(false)
-			drawInteractionRef.current.setActive(false)
-			snapInteractionRef.current.setActive(false)
-			modifyInteractionRef.current.setActive(false)
-			translateInteractionRef.current.setActive(false)
-		} else {
-			// 开始编辑
-			selectInteractionRef.current.setActive(true)
-			drawInteractionRef.current.setActive(true)
-			snapInteractionRef.current.setActive(true)
-			modifyInteractionRef.current.setActive(true)
-			translateInteractionRef.current.setActive(true)
-		}
+		selectInteractionRef.current?.setActive(!isEdit)
+		drawInteractionRef.current?.setActive(!isEdit)
+		snapInteractionRef.current?.setActive(!isEdit)
+		modifyInteractionRef.current?.setActive(!isEdit)
+		translateInteractionRef.current?.setActive(!isEdit)
 		setIsEdit(!isEdit)
 	}
 
 	return (
 		<>
 			<div id='map'></div>
-			<div ref={citySelectRef} id='province-select-control'>
+			<div ref={provinceSelectRef} id='province-select-control'>
 				<TreeSelect
 					getPopupContainer={() => document.getElementById('province-select-control')!}
 					style={{ width: '100%' }}

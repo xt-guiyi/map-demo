@@ -2,7 +2,7 @@
  * @Author: xt 1661219752@qq.com
  * @Date: 2024-08-23 11:10:40
  * @LastEditors: xt-guiyi 1661219752@qq.com
- * @LastEditTime: 2024-09-01 02:09:46
+ * @LastEditTime: 2024-09-01 21:20:49
  * @Description: 地图页
  */
 import { useEffect, useRef, useState } from 'react'
@@ -102,10 +102,9 @@ function App() {
 		applyStyle(layer, mapBoxStyle)
 		// 加载数据
 		client.addLayer(layer)
+		mapRef.current = client
 		handleAreaSelect()
 		console.log('地图加载完成')
-
-		mapRef.current = client
 		return () => {
 			mapRef.current && mapRef.current.setTarget(undefined)
 		}
